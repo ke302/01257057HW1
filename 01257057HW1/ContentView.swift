@@ -77,14 +77,26 @@ enum Character: String, CaseIterable, Identifiable {
 final class AudioManager: ObservableObject {
     static let shared = AudioManager()
     
+    // SFX players cache
     private var players: [String: AVAudioPlayer] = [:]
+    // BGM player
+    private var bgmPlayer: AVAudioPlayer?
+    
     private let session = AVAudioSession.sharedInstance()
+    
+    // 全域音量（用戶設定會從外部注入/變更）
+    // 範圍 0...1
+    var bgmVolume: Float = 0.6 {
+        didSet { bgmPlayer?.volume = bgmVolume }
+    }
+    var sfxVolume: Float = 0.8
     
     private init() {
         try? session.setCategory(.ambient, mode: .default, options: [.mixWithOthers])
         try? session.setActive(true, options: [])
     }
     
+    // MARK: SFX
     func preload(_ names: [String]) {
         for name in names {
             _ = player(for: name)
@@ -109,8 +121,51 @@ final class AudioManager: ObservableObject {
     func play(_ name: String, volume: Float = 1.0) {
         guard let p = player(for: name) else { return }
         p.currentTime = 0
-        p.volume = volume
+        // 套用全域 SFX 音量倍率
+        p.volume = max(0, min(1, volume)) * sfxVolume
         p.play()
+    }
+    
+    // MARK: BGM
+    func loadBGM(named name: String) {
+        guard let url = Bundle.main.url(forResource: name, withExtension: nil) else {
+            bgmPlayer = nil
+            return
+        }
+        do {
+            let p = try AVAudioPlayer(contentsOf: url)
+            p.numberOfLoops = -1 // 預設循環
+            p.volume = bgmVolume
+            p.prepareToPlay()
+            bgmPlayer = p
+        } catch {
+            bgmPlayer = nil
+        }
+    }
+    
+    func playBGM(loop: Bool = true) {
+        guard let p = bgmPlayer else { return }
+        p.numberOfLoops = loop ? -1 : 0
+        if !p.isPlaying {
+            p.play()
+        }
+    }
+    
+    func pauseBGM() {
+        bgmPlayer?.pause()
+    }
+    
+    func stopBGM() {
+        bgmPlayer?.stop()
+        bgmPlayer?.currentTime = 0
+    }
+    
+    func setBGMVolume(_ volume: Float) {
+        bgmVolume = max(0, min(1, volume))
+    }
+    
+    func setSFXVolume(_ volume: Float) {
+        sfxVolume = max(0, min(1, volume))
     }
 }
 
@@ -122,9 +177,18 @@ private enum SFX {
     static let win = "win.mp3"
     static let lose = "lose.mp3"
     static let enemyAttack = "attack_normal.mp3" // 可選，若沒有會自動無聲
+    static let battleBGM = "battle_bgm.mp3"
 }
 
 struct ContentView: View {
+    // MARK: - 音量偏好
+    @AppStorage("bgmEnabled") private var bgmEnabled: Bool = true
+    @AppStorage("bgmVolume") private var bgmVolumeStore: Double = 0.6
+    @AppStorage("sfxVolume") private var sfxVolumeStore: Double = 0.8
+    
+    // 設定面板
+    @State private var showSettings: Bool = false
+    
     // MARK: - Main Menu State
     @State private var showMainMenu: Bool = true
     @State private var showAbout: Bool = false
@@ -226,147 +290,212 @@ struct ContentView: View {
     // MARK: - View
     var body: some View {
         ZStack {
-            // Subtle animated gradient background
-            LinearGradient(colors: [Color.blue.opacity(0.18), Color.purple.opacity(0.18)],
-                           startPoint: .topLeading, endPoint: .bottomTrailing)
-                .ignoresSafeArea()
-                .overlay(
-                    RadialGradient(colors: [Color.white.opacity(0.08), .clear],
-                                   center: .center, startRadius: 20, endRadius: 400)
-                        .blur(radius: 40)
-                )
-                .overlay(
-                    // Decorative faint circles
-                    ZStack {
-                        Circle()
-                            .strokeBorder(Color.blue.opacity(0.12), lineWidth: 2)
-                            .frame(width: 260, height: 260)
-                            .blur(radius: 0.5)
-                        Circle()
-                            .strokeBorder(Color.purple.opacity(0.10), lineWidth: 2)
-                            .frame(width: 360, height: 360)
-                            .blur(radius: 0.5)
-                    }
-                )
-            
-            if showMainMenu {
-                mainMenuView
-            } else if selectedCharacter == nil {
-                characterSelectionView
-            } else {
-                gameView
+            lightMedievalBackground
+            VStack {
+                Spacer(minLength: 0)
+                if showMainMenu {
+                    mainMenuView
+                } else if selectedCharacter == nil {
+                    characterSelectionView
+                } else {
+                    gameView
+                }
+                Spacer(minLength: 0)
             }
             
             if showUpgrade {
-                upgradeOverlay
+                overlayCard(upgradeOverlay)
             }
             
             if showSettlement {
-                settlementOverlay
+                overlayCard(settlementOverlay)
             }
         }
         .onAppear {
-            // Preload sounds for minimal latency
             AudioManager.shared.preload([
-                SFX.tap,
-                SFX.attackNormal,
-                SFX.attackSpecial,
-                SFX.win,
-                SFX.lose,
-                SFX.enemyAttack
+                SFX.tap, SFX.attackNormal, SFX.attackSpecial,
+                SFX.win, SFX.lose, SFX.enemyAttack
             ])
+            AudioManager.shared.setBGMVolume(Float(bgmVolumeStore))
+            AudioManager.shared.setSFXVolume(Float(sfxVolumeStore))
+            AudioManager.shared.loadBGM(named: SFX.battleBGM)
         }
-        .animation(.easeInOut(duration: 0.25), value: playerHP)
-        .animation(.easeInOut(duration: 0.25), value: cpuHP)
-        .alert("遊戲結束", isPresented: $isGameOver) {
-            Button("確定") { }
-        } message: {
-            Text("你被擊敗了，下次再挑戰！")
-        }
+        .onChange(of: bgmVolumeStore) { _, v in AudioManager.shared.setBGMVolume(Float(v)) }
+        .onChange(of: sfxVolumeStore) { _, v in AudioManager.shared.setSFXVolume(Float(v)) }
         .sheet(isPresented: $showTalentsSheet) {
-            TalentSheet(tokens: $tokens,
-                        talent1Level: $talent1Level,
-                        talent2Level: $talent2Level,
-                        talent3Level: $talent3Level,
-                        talent4Level: $talent4Level,
-                        talent5Level: $talent5Level,
-                        talent6Level: $talent6Level)
+            themedContainer {
+                TalentSheet(tokens: $tokens,
+                            talent1Level: $talent1Level,
+                            talent2Level: $talent2Level,
+                            talent3Level: $talent3Level,
+                            talent4Level: $talent4Level,
+                            talent5Level: $talent5Level,
+                            talent6Level: $talent6Level)
+            }
         }
         .sheet(isPresented: $showAbout) {
-            AboutView {
-                showAbout = false
+            themedContainer { AboutView { showAbout = false } }
+        }
+        .sheet(isPresented: $showSettings) {
+            themedContainer {
+                SettingsView(bgmEnabled: $bgmEnabled,
+                             bgmVolume: $bgmVolumeStore,
+                             sfxVolume: $sfxVolumeStore,
+                             onClose: { showSettings = false })
+                .onChange(of: bgmEnabled) { _, on in
+                    if on { AudioManager.shared.loadBGM(named: SFX.battleBGM) }
+                    else { AudioManager.shared.stopBGM() }
+                }
+            }
+        }
+        .alert("遊戲結束", isPresented: $isGameOver) {
+            Button("確定") { }
+        } message: { Text("你被擊敗了，下次再挑戰！") }
+    }
+    
+    // MARK: - Themed Background (Bright)
+    private var lightMedievalBackground: some View {
+        ZStack {
+            LinearGradient(colors: [
+                Color(red: 0.98, green: 0.96, blue: 0.90),
+                Color(red: 0.94, green: 0.90, blue: 0.82)
+            ], startPoint: .top, endPoint: .bottom)
+            .ignoresSafeArea()
+            // 柔和紙張紋理亮暈
+            RadialGradient(colors: [Color.white.opacity(0.25), .clear],
+                           center: .center, startRadius: 20, endRadius: 600)
+                .blur(radius: 40)
+        }
+    }
+    
+    // 通用亮色卡片
+    private func parchmentCard(_ content: () -> some View) -> some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                .fill(Color(red: 1.00, green: 0.98, blue: 0.93).opacity(0.92))
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                .stroke(Color(red: 0.75, green: 0.58, blue: 0.25).opacity(0.7), lineWidth: 2)
+        }
+        .overlay(content())
+        .shadow(color: .black.opacity(0.08), radius: 10, x: 0, y: 6)
+    }
+    
+    // Sheet 統一容器
+    private func themedContainer<Content: View>(@ViewBuilder content: @escaping () -> Content) -> some View {
+        ZStack {
+            lightMedievalBackground
+            VStack {
+                content()
+                    .padding()
+                    .background(
+                        RoundedRectangle(cornerRadius: 18, style: .continuous)
+                            .fill(Color.white.opacity(0.9))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                                    .stroke(Color(red: 0.75, green: 0.58, blue: 0.25).opacity(0.7), lineWidth: 1.5)
+                            )
+                    )
+                    .padding()
             }
         }
     }
     
-    // MARK: - Main Menu
+    private func overlayCard<Content: View>(_ inner: Content) -> some View {
+        ZStack {
+            Color.black.opacity(0.15).ignoresSafeArea()
+            inner
+                .padding()
+                .background(
+                    RoundedRectangle(cornerRadius: 20, style: .continuous)
+                        .fill(Color.white.opacity(0.92))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                                .stroke(Color(red: 0.75, green: 0.58, blue: 0.25).opacity(0.7), lineWidth: 1.5)
+                        )
+                )
+                .shadow(color: .black.opacity(0.1), radius: 12, x: 0, y: 6)
+                .padding(24)
+        }
+        .transition(.opacity.combined(with: .scale))
+    }
+    
+    // MARK: - Main Menu (Centered + Bright theme)
     private var mainMenuView: some View {
-        VStack(spacing: 28) {
-            VStack(spacing: 8) {
-                Text("我獨自猜拳")
-                    .font(.system(size: 34, weight: .heavy, design: .rounded))
-                    .shadow(color: .black.opacity(0.15), radius: 3, x: 0, y: 2)
+        VStack(spacing: 22) {
+            VStack(spacing: 6) {
+                Label("我獨自猜拳", systemImage: "shield.lefthalf.filled")
+                    .font(.system(size: 34, weight: .heavy, design: .serif))
                 Text("Rock · Paper · Scissors · Rogue")
-                    .font(.subheadline)
+                    .font(.footnote.smallCaps())
                     .foregroundStyle(.secondary)
             }
-            .padding(.top, 24)
+            .padding(.top, 6)
             
-            VStack(spacing: 16) {
-                fancyMenuButton(title: "開始遊戲", systemImage: "play.circle.fill") {
+            VStack(spacing: 14) {
+                menuCardButton(title: "開始冒險", systemImage: "sword", accent: .orange) {
                     AudioManager.shared.play(SFX.tap, volume: 0.8)
                     resetToCharacterSelect()
                     showMainMenu = false
+                    if bgmEnabled {
+                        AudioManager.shared.loadBGM(named: SFX.battleBGM)
+                        AudioManager.shared.playBGM(loop: true)
+                    }
                 }
-                fancyMenuButton(title: "天賦", systemImage: "star.circle.fill") {
+                menuCardButton(title: "天賦", systemImage: "star.circle", accent: .yellow) {
                     AudioManager.shared.play(SFX.tap, volume: 0.8)
                     showTalentsSheet = true
                 }
-                fancyMenuButton(title: "關於", systemImage: "info.circle.fill") {
+                menuCardButton(title: "設定", systemImage: "gearshape.2", accent: .blue) {
+                    AudioManager.shared.play(SFX.tap, volume: 0.8)
+                    showSettings = true
+                }
+                menuCardButton(title: "關於", systemImage: "book", accent: .teal) {
                     AudioManager.shared.play(SFX.tap, volume: 0.8)
                     showAbout = true
                 }
             }
-            .padding(.horizontal)
+            .padding(.horizontal, 24)
             
-            VStack(spacing: 6) {
+            VStack(spacing: 4) {
                 Text("代幣：\(String(format: "%.2f", tokens))")
                     .font(.headline)
-                Text("提示：可在遊戲中按「重置(回選角)」返回選角畫面")
+                    .foregroundStyle(.secondary)
+                Text("在設定裡可調整 BGM / SFX 音量")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
-            .padding(.top, 8)
-            
-            Spacer()
+            .padding(.top, 4)
         }
-        .padding(.vertical)
+        .padding(.vertical, 24)
+        .frame(maxWidth: 520)
+        .background(parchmentCard { EmptyView() })
+        .padding(.horizontal, 20)
     }
     
-    private func fancyMenuButton(title: String, systemImage: String, action: @escaping () -> Void) -> some View {
+    private func menuCardButton(title: String, systemImage: String, accent: Color, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             HStack(spacing: 14) {
                 Image(systemName: systemImage)
-                    .font(.system(size: 26, weight: .bold))
-                    .frame(width: 30)
+                    .font(.system(size: 24, weight: .black))
                 Text(title)
-                    .font(.headline)
+                    .font(.system(.title3, design: .serif).weight(.bold))
                 Spacer()
                 Image(systemName: "chevron.right")
-                    .font(.subheadline.weight(.bold))
+                    .font(.headline.weight(.bold))
                     .foregroundStyle(.secondary)
             }
+            .foregroundStyle(.primary)
             .padding()
             .frame(maxWidth: .infinity)
             .background(
                 RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .fill(.ultraThinMaterial)
+                    .fill(Color.white.opacity(0.9))
                     .overlay(
                         RoundedRectangle(cornerRadius: 16, style: .continuous)
-                            .stroke(Color.accentColor.opacity(0.25), lineWidth: 1)
+                            .stroke(accent.opacity(0.6), lineWidth: 1.5)
                     )
-                    .shadow(color: .black.opacity(0.08), radius: 8, x: 0, y: 4)
             )
+            .shadow(color: .black.opacity(0.08), radius: 6, x: 0, y: 4)
         }
         .buttonStyle(ScaleButtonStyle())
     }
@@ -374,8 +503,8 @@ struct ContentView: View {
     // MARK: - Character Selection
     private var characterSelectionView: some View {
         VStack(spacing: 24) {
-            Text("選擇角色")
-                .font(.largeTitle.bold())
+            Text("選擇職業")
+                .font(.system(.largeTitle, design: .serif).bold())
                 .padding(.top, 8)
             
             VStack(spacing: 16) {
@@ -383,6 +512,9 @@ struct ContentView: View {
                     Button {
                         AudioManager.shared.play(SFX.tap, volume: 0.8)
                         choose(character)
+                        if bgmEnabled {
+                            AudioManager.shared.playBGM(loop: true)
+                        }
                     } label: {
                         HStack(spacing: 16) {
                             Image(systemName: character.icon)
@@ -410,17 +542,18 @@ struct ContentView: View {
                         .frame(maxWidth: .infinity)
                         .background(
                             RoundedRectangle(cornerRadius: 14, style: .continuous)
-                                .fill(.ultraThinMaterial)
+                                .fill(Color.white.opacity(0.9))
                                 .overlay(
                                     RoundedRectangle(cornerRadius: 14, style: .continuous)
-                                        .stroke(Color.accentColor.opacity(0.2), lineWidth: 1)
+                                        .stroke(Color(red: 0.75, green: 0.58, blue: 0.25).opacity(0.7), lineWidth: 1.5)
                                 )
                         )
+                        .shadow(color: .black.opacity(0.08), radius: 4, x: 0, y: 3)
                     }
                     .buttonStyle(ScaleButtonStyle())
                 }
             }
-            .padding(.horizontal)
+            .padding(.horizontal, 20)
             
             VStack(spacing: 8) {
                 Text("代幣：\(String(format: "%.2f", tokens))")
@@ -434,7 +567,7 @@ struct ContentView: View {
                             .font(.headline)
                             .padding(.horizontal, 20)
                             .padding(.vertical, 10)
-                            .background(Color.accentColor.opacity(0.2), in: Capsule())
+                            .background(Color.orange.opacity(0.2), in: Capsule())
                     }
                     .buttonStyle(ScaleButtonStyle())
                     
@@ -442,12 +575,13 @@ struct ContentView: View {
                         AudioManager.shared.play(SFX.tap, volume: 0.8)
                         selectedCharacter = nil
                         showMainMenu = true
+                        AudioManager.shared.stopBGM()
                     } label: {
-                        Label("返回主畫面", systemImage: "house")
+                        Label("返回大廳", systemImage: "house")
                             .font(.headline)
                             .padding(.horizontal, 20)
                             .padding(.vertical, 10)
-                            .background(Color.accentColor.opacity(0.15), in: Capsule())
+                            .background(Color.gray.opacity(0.2), in: Capsule())
                     }
                     .buttonStyle(ScaleButtonStyle())
                 }
@@ -460,19 +594,22 @@ struct ContentView: View {
                 .padding(.horizontal)
         }
         .padding(.vertical)
+        .frame(maxWidth: 700)
+        .background(parchmentCard { EmptyView() })
+        .padding(.horizontal, 16)
     }
     
     // MARK: - Game View
     private var gameView: some View {
         VStack(spacing: 24) {
             Text("我獨自猜拳")
-                .font(.largeTitle.bold())
+                .font(.system(.largeTitle, design: .serif).bold())
                 .padding(.top, 8)
             
             if let selectedCharacter {
                 HStack(spacing: 8) {
                     Image(systemName: selectedCharacter.icon)
-                    Text("角色：\(selectedCharacter.name)")
+                    Text("職業：\(selectedCharacter.name)")
                         .font(.headline)
                     Spacer()
                     if selectedCharacter == .蓄力鬥士 {
@@ -554,7 +691,11 @@ struct ContentView: View {
                         }
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 12)
-                        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                        .background(Color.white.opacity(0.92), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                .stroke(Color(red: 0.75, green: 0.58, blue: 0.25).opacity(0.7), lineWidth: 1.5)
+                        )
                     }
                     .buttonStyle(ScaleButtonStyle())
                     .disabled(isGameOver || showUpgrade || showSettlement)
@@ -572,7 +713,7 @@ struct ContentView: View {
                         .font(.headline)
                         .padding(.horizontal, 20)
                         .padding(.vertical, 10)
-                        .background(Color.accentColor.opacity(0.15), in: Capsule())
+                        .background(Color.orange.opacity(0.2), in: Capsule())
                 }
                 .buttonStyle(ScaleButtonStyle())
                 .disabled(showSettlement)
@@ -584,7 +725,7 @@ struct ContentView: View {
                         .font(.headline)
                         .padding(.horizontal, 20)
                         .padding(.vertical, 10)
-                        .background(Color.accentColor.opacity(0.25), in: Capsule())
+                        .background(Color.yellow.opacity(0.25), in: Capsule())
                 }
                 .buttonStyle(ScaleButtonStyle())
                 Button {
@@ -592,140 +733,118 @@ struct ContentView: View {
                     showMainMenu = true
                     selectedCharacter = nil
                     resetGame()
+                    AudioManager.shared.stopBGM()
                 } label: {
-                    Text("主畫面")
+                    Text("返回大廳")
                         .font(.headline)
                         .padding(.horizontal, 20)
                         .padding(.vertical, 10)
-                        .background(Color.accentColor.opacity(0.35), in: Capsule())
+                        .background(Color.gray.opacity(0.2), in: Capsule())
                 }
                 .buttonStyle(ScaleButtonStyle())
             }
             .padding(.bottom, 12)
         }
         .padding(.vertical)
+        .frame(maxWidth: 900)
+        .background(parchmentCard { EmptyView() })
+        .padding(.horizontal, 16)
     }
     
     // MARK: - Derived current enemy stats (Boss 取 2x)
-    private var currentEnemyMaxHP: Int {
-        isBossRound ? cpuMaxHP * 2 : cpuMaxHP
-    }
-    private var currentEnemyAttack: Int {
-        isBossRound ? cpuAttack * 2 : cpuAttack
-    }
+    private var currentEnemyMaxHP: Int { isBossRound ? cpuMaxHP * 2 : cpuMaxHP }
+    private var currentEnemyAttack: Int { isBossRound ? cpuAttack * 2 : cpuAttack }
     private var currentEnemyDefense: Int {
         let base = isBossRound ? cpuDefense * 2 : cpuDefense
         return max(0, base - ignoreDefenseFlat)
     }
     
-    // MARK: - Upgrade Overlay
+    // MARK: - Upgrade Overlay content
     private var upgradeOverlay: some View {
-        ZStack {
-            Color.black.opacity(0.35).ignoresSafeArea()
-            VStack(spacing: 16) {
-                Text(lastWinWasBoss ? "Boss 勝利！選擇雙倍強化" : "勝利！選擇一個強化")
-                    .font(.title2.bold())
-                VStack(spacing: 12) {
-                    Button {
-                        AudioManager.shared.play(SFX.tap, volume: 0.8)
-                        applyUpgrade(.attack)
-                    } label: {
-                        if lastWinWasBoss {
-                            upgradeCard(title: "攻擊力 +10", icon: "flame", subtitle: "Boss 獎勵：雙倍強化")
-                        } else {
-                            upgradeCard(title: "攻擊力 +5", icon: "flame", subtitle: "提升造成的傷害")
-                        }
-                    }
-                    .buttonStyle(ScaleButtonStyle())
-                    Button {
-                        AudioManager.shared.play(SFX.tap, volume: 0.8)
-                        applyUpgrade(.defense)
-                    } label: {
-                        if lastWinWasBoss {
-                            upgradeCard(title: "防禦力 +6", icon: "shield", subtitle: "Boss 獎勵：雙倍強化")
-                        } else {
-                            upgradeCard(title: "防禦力 +3", icon: "shield", subtitle: "減少受到的傷害")
-                        }
-                    }
-                    .buttonStyle(ScaleButtonStyle())
-                    Button {
-                        AudioManager.shared.play(SFX.tap, volume: 0.8)
-                        applyUpgrade(.maxHP)
-                    } label: {
-                        if lastWinWasBoss {
-                            upgradeCard(title: "血量上限 +40，並回復 60 生命", icon: "heart", subtitle: "上限提升且立即回復（不影響護盾）")
-                        } else {
-                            upgradeCard(title: "血量上限 +20，並回復 30 生命", icon: "heart", subtitle: "上限提升且立即回復（不影響護盾）")
-                        }
-                    }
-                    .buttonStyle(ScaleButtonStyle())
+        VStack(spacing: 16) {
+            Text(lastWinWasBoss ? "Boss 勝利！選擇雙倍強化" : "勝利！選擇一個強化")
+                .font(.title2.bold())
+            VStack(spacing: 12) {
+                Button {
+                    AudioManager.shared.play(SFX.tap, volume: 0.8)
+                    applyUpgrade(.attack)
+                } label: {
+                    upgradeCard(title: lastWinWasBoss ? "攻擊力 +10" : "攻擊力 +5",
+                                icon: "flame",
+                                subtitle: lastWinWasBoss ? "Boss 獎勵：雙倍強化" : "提升造成的傷害")
                 }
-                .padding(.horizontal)
+                .buttonStyle(ScaleButtonStyle())
+                Button {
+                    AudioManager.shared.play(SFX.tap, volume: 0.8)
+                    applyUpgrade(.defense)
+                } label: {
+                    upgradeCard(title: lastWinWasBoss ? "防禦力 +6" : "防禦力 +3",
+                                icon: "shield",
+                                subtitle: lastWinWasBoss ? "Boss 獎勵：雙倍強化" : "減少受到的傷害")
+                }
+                .buttonStyle(ScaleButtonStyle())
+                Button {
+                    AudioManager.shared.play(SFX.tap, volume: 0.8)
+                    applyUpgrade(.maxHP)
+                } label: {
+                    upgradeCard(title: lastWinWasBoss ? "血量上限 +40，回復 60 生命" : "血量上限 +20，回復 30 生命",
+                                icon: "heart",
+                                subtitle: "上限提升且立即回復（不影響護盾）")
+                }
+                .buttonStyle(ScaleButtonStyle())
             }
-            .padding()
-            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
-            .padding(24)
+            .padding(.horizontal)
         }
-        .transition(.opacity.combined(with: .scale))
     }
     
-    // MARK: - Settlement Overlay
+    // MARK: - Settlement Overlay content
     private var settlementOverlay: some View {
-        ZStack {
-            Color.black.opacity(0.45).ignoresSafeArea()
-            VStack(spacing: 16) {
-                Text("結算")
-                    .font(.largeTitle.bold())
-                VStack(spacing: 8) {
-                    Label("一般擊敗：\(defeatCount)", systemImage: "trophy")
-                    Label("Boss 擊敗：\(bossWinsCount)", systemImage: "crown")
-                    Label("獲得代幣：\(String(format: "%.2f", tokensEarnedThisRun))", systemImage: "bitcoinsign.circle")
-                }
-                .font(.headline)
-                .padding(.vertical, 4)
-                
-                HStack(spacing: 12) {
-                    Button {
-                        AudioManager.shared.play(SFX.tap, volume: 0.8)
-                        tokens += tokensEarnedThisRun
-                        tokensEarnedThisRun = 0
-                        showSettlement = false
-                        resetToCharacterSelect()
-                        showMainMenu = true
-                    } label: {
-                        Text("領取並返回主畫面")
-                            .font(.headline)
-                            .padding(.horizontal, 16)
-                            .padding(.vertical, 10)
-                            .background(Color.accentColor.opacity(0.25), in: Capsule())
-                    }
-                    .buttonStyle(ScaleButtonStyle())
-                    Button {
-                        AudioManager.shared.play(SFX.tap, volume: 0.8)
-                        tokens += tokensEarnedThisRun
-                        tokensEarnedThisRun = 0
-                        showSettlement = false
-                        resetToCharacterSelect()
-                        showTalentsSheet = true
-                    } label: {
-                        Text("領取並前往天賦")
-                            .font(.headline)
-                            .padding(.horizontal, 16)
-                            .padding(.vertical, 10)
-                            .background(Color.accentColor.opacity(0.35), in: Capsule())
-                    }
-                    .buttonStyle(ScaleButtonStyle())
-                }
+        VStack(spacing: 16) {
+            Text("結算")
+                .font(.largeTitle.bold())
+            VStack(spacing: 8) {
+                Label("一般擊敗：\(defeatCount)", systemImage: "trophy")
+                Label("Boss 擊敗：\(bossWinsCount)", systemImage: "crown")
+                Label("獲得代幣：\(String(format: "%.2f", tokensEarnedThisRun))", systemImage: "bitcoinsign.circle")
             }
-            .padding()
-            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
-            .padding(24)
+            .font(.headline)
+            .padding(.vertical, 4)
+            
+            HStack(spacing: 12) {
+                Button {
+                    AudioManager.shared.play(SFX.tap, volume: 0.8)
+                    tokens += tokensEarnedThisRun
+                    tokensEarnedThisRun = 0
+                    showSettlement = false
+                    resetToCharacterSelect()
+                    showMainMenu = true
+                    AudioManager.shared.stopBGM()
+                } label: {
+                    Text("領取並返回大廳")
+                        .font(.headline)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 10)
+                        .background(Color.orange.opacity(0.2), in: Capsule())
+                }
+                .buttonStyle(ScaleButtonStyle())
+                Button {
+                    AudioManager.shared.play(SFX.tap, volume: 0.8)
+                    tokens += tokensEarnedThisRun
+                    tokensEarnedThisRun = 0
+                    showSettlement = false
+                    resetToCharacterSelect()
+                    showTalentsSheet = true
+                    AudioManager.shared.stopBGM()
+                } label: {
+                    Text("領取並前往天賦")
+                        .font(.headline)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 10)
+                        .background(Color.yellow.opacity(0.3), in: Capsule())
+                }
+                .buttonStyle(ScaleButtonStyle())
+            }
         }
-        .transition(.opacity.combined(with: .scale))
-    }
-    
-    private enum Upgrade {
-        case attack, defense, maxHP
     }
     
     private func upgradeCard(title: String, icon: String, subtitle: String) -> some View {
@@ -741,7 +860,11 @@ struct ContentView: View {
         }
         .padding()
         .frame(maxWidth: .infinity)
-        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .background(Color.white.opacity(0.95), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .stroke(Color(red: 0.75, green: 0.58, blue: 0.25).opacity(0.7), lineWidth: 1.2)
+        )
     }
     
     // MARK: - UI Parts
@@ -757,8 +880,9 @@ struct ContentView: View {
             }
             ProgressView(value: Double(max(0, hp)), total: Double(maxHP))
                 .tint(color)
-                .shadow(color: color.opacity(0.35), radius: 4, x: 0, y: 2)
+                .shadow(color: color.opacity(0.15), radius: 3, x: 0, y: 1)
         }
+        .padding(.horizontal)
     }
     
     private func choiceCard(owner: String, choice: RPS?) -> some View {
@@ -768,7 +892,11 @@ struct ContentView: View {
                 .foregroundStyle(.secondary)
             ZStack {
                 RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .fill(.ultraThinMaterial)
+                    .fill(Color.white.opacity(0.95))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 16, style: .continuous)
+                            .stroke(Color(red: 0.75, green: 0.58, blue: 0.25).opacity(0.7), lineWidth: 1.2)
+                    )
                     .frame(width: 110, height: 110)
                 if let choice {
                     VStack(spacing: 6) {
@@ -824,7 +952,6 @@ struct ContentView: View {
             let outgoing = max(1, Int(damage.rounded()) - currentEnemyDefense)
             cpuHP = max(0, cpuHP - outgoing)
             
-            // 播放攻擊音效（特殊/普通）
             AudioManager.shared.play(isSpecialAttack ? SFX.attackSpecial : SFX.attackNormal, volume: 0.9)
             
             var baseMsg = "你贏了！對手受到 \(outgoing) 傷害。"
@@ -837,16 +964,12 @@ struct ContentView: View {
                     extraMsg.append("治療效果！回復\(healed)點生命")
                 }
             }
-            if !extraMsg.isEmpty {
-                baseMsg += " " + extraMsg.joined(separator: "，")
-            }
+            if !extraMsg.isEmpty { baseMsg += " " + extraMsg.joined(separator: "，") }
             message = baseMsg
             hitCPU()
             
             if cpuHP <= 0 {
-                // 勝利時護盾回滿
                 refillShield()
-                // 勝利音效
                 AudioManager.shared.play(SFX.win, volume: 1.0)
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
                     handleEnemyDefeated()
@@ -857,7 +980,6 @@ struct ContentView: View {
             let incomingRaw = max(1, currentEnemyAttack - playerDefense)
             let afterShield = applyDamageToShieldThenHP(incomingRaw)
             message = "你輸了！你受到 \(afterShield) 傷害。"
-            // 敵方攻擊音效
             AudioManager.shared.play(SFX.enemyAttack, volume: 0.9)
             hitPlayer()
             
@@ -870,7 +992,6 @@ struct ContentView: View {
             tokensEarnedThisRun = calcTokenReward()
             showSettlement = true
             showUpgrade = false
-            // 戰敗音效
             AudioManager.shared.play(SFX.lose, volume: 1.0)
         }
     }
@@ -908,8 +1029,11 @@ struct ContentView: View {
     }
     
     private func calcTokenReward() -> Double {
-        return Double(defeatCount) + 5.0 * Double(bossWinsCount)
+        Double(defeatCount) + 5.0 * Double(bossWinsCount)
     }
+    
+    // Keep a single Upgrade enum definition
+    private enum Upgrade { case attack, defense, maxHP }
     
     private func applyUpgrade(_ upgrade: Upgrade) {
         guard !showSettlement else { return }
@@ -934,7 +1058,6 @@ struct ContentView: View {
             message = "升級成功！血量上限 +\(hpGain)；並回復 \(healed) 生命"
         }
         
-        // 升級後開始新的一場
         showUpgrade = false
         lastWinWasBoss = false
         
@@ -982,9 +1105,7 @@ struct ContentView: View {
         selectedCharacter = character
         
         passiveMultiplier = 1.0 + 0.1 * Double(min(5, talent4Level))
-        if talent4Level >= 5 {
-            passiveMultiplier += 0.25
-        }
+        if talent4Level >= 5 { passiveMultiplier += 0.25 }
         playerAttack = 20 + talentAttackBonus()
         playerDefense = 10 + talentDefenseBonus()
         playerMaxHP = 100 + talentHPBonus()
@@ -1052,9 +1173,7 @@ struct ContentView: View {
         }
     }
     
-    private func refillShield() {
-        playerShield = playerShieldMax
-    }
+    private func refillShield() { playerShield = playerShieldMax }
     
     private func talentAttackBonus() -> Int {
         let lv = min(5, max(0, talent1Level))
@@ -1073,13 +1192,56 @@ struct ContentView: View {
     }
 }
 
-// MARK: - Button scale style for nicer tap feedback
+// MARK: - Button scale style
 struct ScaleButtonStyle: ButtonStyle {
     var scale: CGFloat = 0.96
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .scaleEffect(configuration.isPressed ? scale : 1.0)
             .animation(.spring(response: 0.25, dampingFraction: 0.7), value: configuration.isPressed)
+    }
+}
+
+// MARK: - Settings View
+struct SettingsView: View {
+    @Binding var bgmEnabled: Bool
+    @Binding var bgmVolume: Double
+    @Binding var sfxVolume: Double
+    var onClose: (() -> Void)?
+    
+    var body: some View {
+        NavigationView {
+            Form {
+                Section(header: Text("音樂")) {
+                    Toggle("啟用背景音樂", isOn: $bgmEnabled)
+                    HStack {
+                        Image(systemName: "speaker.slash")
+                        Slider(value: $bgmVolume, in: 0...1, step: 0.01)
+                        Image(systemName: "speaker.wave.3")
+                    }
+                    .disabled(!bgmEnabled)
+                    .opacity(bgmEnabled ? 1 : 0.4)
+                }
+                Section(header: Text("音效")) {
+                    HStack {
+                        Image(systemName: "speaker.slash")
+                        Slider(value: $sfxVolume, in: 0...1, step: 0.01)
+                        Image(systemName: "speaker.wave.3")
+                    }
+                }
+                Section {
+                    Text("提示：背景音樂使用 .ambient 音訊類別，可與其他 App 混音。")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .navigationTitle("設定")
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("完成") { onClose?() }
+                }
+            }
+        }
     }
 }
 
@@ -1150,7 +1312,6 @@ struct TalentSheet: View {
         level < 5 && tokens + 1e-9 >= costFor(level: level)
     }
     
-    // 護盾成本：每升 1 級，成本 +2（升到 Lv.(n+1) 的成本 = 2*(n+1)）
     private func shieldCostFor(level: Int) -> Double {
         let nextLevel = level + 1
         return Double(2 * nextLevel)
@@ -1290,7 +1451,7 @@ struct TalentSheet: View {
                                     .font(.subheadline.weight(.semibold))
                                     .padding(.horizontal, 12)
                                     .padding(.vertical, 8)
-                                    .background(canUpgradeShield(level: talent6Level) ? Color.accentColor.opacity(0.25) : Color.gray.opacity(0.2), in: Capsule())
+                                    .background(canUpgradeShield(level: talent6Level) ? Color.orange.opacity(0.2) : Color.gray.opacity(0.2), in: Capsule())
                             }
                         }
                         .disabled(!canUpgradeShield(level: talent6Level))
@@ -1301,9 +1462,7 @@ struct TalentSheet: View {
             .navigationTitle("天賦")
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button("關閉") {
-                        dismiss()
-                    }
+                    Button("關閉") { dismiss() }
                 }
             }
         }
@@ -1349,7 +1508,7 @@ struct TalentSheet: View {
                             .font(.subheadline.weight(.semibold))
                             .padding(.horizontal, 12)
                             .padding(.vertical, 8)
-                            .background((canUpgrade(level.wrappedValue)) ? Color.accentColor.opacity(0.25) : Color.gray.opacity(0.2), in: Capsule())
+                            .background((canUpgrade(level.wrappedValue)) ? Color.orange.opacity(0.2) : Color.gray.opacity(0.2), in: Capsule())
                     }
                 }
                 .disabled(!canUpgrade(level.wrappedValue))
