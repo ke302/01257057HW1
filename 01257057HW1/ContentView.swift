@@ -52,14 +52,15 @@ enum Character: String, CaseIterable, Identifiable {
         }
     }
     
+    // 僅保留能力敘述（移除「目前總倍率會等於…」）
     var description: String {
         switch self {
         case .強運戰士:
-            return "猜贏時50%機率打出1.5×被動倍率的爆擊"
+            return "猜贏時 50% 機率造成 1.50× 傷害"
         case .蓄力鬥士:
-            return "連續猜贏3次後，第4次打出2.5×被動倍率的爆發傷害"
+            return "連續猜贏 3 次後，第 4 次造成 2.50× 傷害"
         case .治療祭司:
-            return "猜贏時回復本次造成傷害的50%（不影響護盾）"
+            return "猜贏時回復本次造成傷害的 50%"
         }
     }
     
@@ -77,15 +78,10 @@ enum Character: String, CaseIterable, Identifiable {
 final class AudioManager: ObservableObject {
     static let shared = AudioManager()
     
-    // SFX players cache
     private var players: [String: AVAudioPlayer] = [:]
-    // BGM player
     private var bgmPlayer: AVAudioPlayer?
-    
     private let session = AVAudioSession.sharedInstance()
     
-    // 全域音量（用戶設定會從外部注入/變更）
-    // 範圍 0...1
     var bgmVolume: Float = 0.6 {
         didSet { bgmPlayer?.volume = bgmVolume }
     }
@@ -96,18 +92,13 @@ final class AudioManager: ObservableObject {
         try? session.setActive(true, options: [])
     }
     
-    // MARK: SFX
     func preload(_ names: [String]) {
-        for name in names {
-            _ = player(for: name)
-        }
+        for name in names { _ = player(for: name) }
     }
     
     private func player(for name: String) -> AVAudioPlayer? {
         if let cached = players[name] { return cached }
-        guard let url = Bundle.main.url(forResource: name, withExtension: nil) else {
-            return nil
-        }
+        guard let url = Bundle.main.url(forResource: name, withExtension: nil) else { return nil }
         do {
             let p = try AVAudioPlayer(contentsOf: url)
             p.prepareToPlay()
@@ -121,12 +112,10 @@ final class AudioManager: ObservableObject {
     func play(_ name: String, volume: Float = 1.0) {
         guard let p = player(for: name) else { return }
         p.currentTime = 0
-        // 套用全域 SFX 音量倍率
         p.volume = max(0, min(1, volume)) * sfxVolume
         p.play()
     }
     
-    // MARK: BGM
     func loadBGM(named name: String) {
         guard let url = Bundle.main.url(forResource: name, withExtension: nil) else {
             bgmPlayer = nil
@@ -134,7 +123,7 @@ final class AudioManager: ObservableObject {
         }
         do {
             let p = try AVAudioPlayer(contentsOf: url)
-            p.numberOfLoops = -1 // 預設循環
+            p.numberOfLoops = -1
             p.volume = bgmVolume
             p.prepareToPlay()
             bgmPlayer = p
@@ -146,87 +135,61 @@ final class AudioManager: ObservableObject {
     func playBGM(loop: Bool = true) {
         guard let p = bgmPlayer else { return }
         p.numberOfLoops = loop ? -1 : 0
-        if !p.isPlaying {
-            p.play()
-        }
+        if !p.isPlaying { p.play() }
     }
-    
-    func pauseBGM() {
-        bgmPlayer?.pause()
-    }
-    
-    func stopBGM() {
-        bgmPlayer?.stop()
-        bgmPlayer?.currentTime = 0
-    }
-    
-    func setBGMVolume(_ volume: Float) {
-        bgmVolume = max(0, min(1, volume))
-    }
-    
-    func setSFXVolume(_ volume: Float) {
-        sfxVolume = max(0, min(1, volume))
-    }
+    func pauseBGM() { bgmPlayer?.pause() }
+    func stopBGM() { bgmPlayer?.stop(); bgmPlayer?.currentTime = 0 }
+    func setBGMVolume(_ volume: Float) { bgmVolume = max(0, min(1, volume)) }
+    func setSFXVolume(_ volume: Float) { sfxVolume = max(0, min(1, volume)) }
 }
 
-// 統一音效鍵值（對應檔名）
 private enum SFX {
     static let tap = "tap.mp3"
     static let attackNormal = "attack_normal.mp3"
     static let attackSpecial = "attack_special.mp3"
     static let win = "win.mp3"
     static let lose = "lose.mp3"
-    static let enemyAttack = "attack_normal.mp3" // 可選，若沒有會自動無聲
+    static let enemyAttack = "attack_normal.mp3"
     static let battleBGM = "battle_bgm.mp3"
 }
 
 struct ContentView: View {
-    // MARK: - 音量偏好
     @AppStorage("bgmEnabled") private var bgmEnabled: Bool = true
     @AppStorage("bgmVolume") private var bgmVolumeStore: Double = 0.6
     @AppStorage("sfxVolume") private var sfxVolumeStore: Double = 0.8
     
-    // 設定面板
     @State private var showSettings: Bool = false
     
-    // MARK: - Main Menu State
     @State private var showMainMenu: Bool = true
     @State private var showAbout: Bool = false
     
-    // MARK: - Meta progression (persistent)
     @AppStorage("tokens") private var tokens: Double = 0.0
-    @AppStorage("talent1Level") private var talent1Level: Int = 0 // 攻擊力
-    @AppStorage("talent2Level") private var talent2Level: Int = 0 // 防禦力
-    @AppStorage("talent3Level") private var talent3Level: Int = 0 // 生命
-    @AppStorage("talent4Level") private var talent4Level: Int = 0 // 角色被動倍率
-    @AppStorage("talent5Level") private var talent5Level: Int = 0 // 無視防禦（最多5級）
-    @AppStorage("talent6Level") private var talent6Level: Int = 0 // 護盾（最多100級）
+    @AppStorage("talent1Level") private var talent1Level: Int = 0
+    @AppStorage("talent2Level") private var talent2Level: Int = 0
+    @AppStorage("talent3Level") private var talent3Level: Int = 0
+    @AppStorage("talent4Level") private var talent4Level: Int = 0
+    @AppStorage("talent5Level") private var talent5Level: Int = 0
+    @AppStorage("talent6Level") private var talent6Level: Int = 0
     
-    // MARK: - Run state
     @State private var playerHP: Int = 100
     @State private var playerMaxHP: Int = 100
     @State private var playerAttack: Int = 20
     @State private var playerDefense: Int = 10
     
-    // 護盾
     @State private var playerShieldMax: Int = 0
     @State private var playerShield: Int = 0
     
-    // CPU 基線屬性與當前戰鬥屬性
     @State private var cpuMaxHP: Int = 50
     @State private var cpuHP: Int = 50
     @State private var cpuAttack: Int = 5
     @State private var cpuDefense: Int = 0
     
-    // Boss 回合控制
     @State private var isBossRound: Bool = false
     @State private var lastWinWasBoss: Bool = false
     @State private var bossWinsCount: Int = 0
     
-    // 進度
     @State private var defeatCount: Int = 0
     
-    // 回合顯示
     @State private var playerChoice: RPS? = nil
     @State private var cpuChoice: RPS? = nil
     @State private var message: String = "選擇你的出拳！"
@@ -234,60 +197,52 @@ struct ContentView: View {
     @State private var shakePlayer: Bool = false
     @State private var shakeCPU: Bool = false
     
-    // 角色相關
     @State private var selectedCharacter: Character? = nil
     @State private var winCountForChar2: Int = 0
     
-    // Roguelike 升級（只在電腦血量歸零後出現）
     @State private var showUpgrade: Bool = false
-    
-    // 結算與天賦 UI
     @State private var showSettlement: Bool = false
     @State private var tokensEarnedThisRun: Double = 0.0
     @State private var showTalentsSheet: Bool = false
     
-    // 數值設定
     private let baseCritMultiplier: Double = 1.5
     private let baseBurstMultiplier: Double = 2.5
     private let luckyCritChance: Double = 0.5
     
-    // 被動倍率（由天賦4提供）
     @State private var passiveMultiplier: Double = 1.0
     
-    // 計算用：天賦5 無視防禦（平坦值）
-    private var ignoreDefenseFlat: Int {
+    // New: run-scoped token standard, starts at 1.0 and doubles per boss win
+    @State private var tokenStandard: Double = 1.0
+    
+    private var ignoreDefensePercent: Double {
         let lv = min(5, max(0, talent5Level))
-        let base = lv * 5
-        return lv >= 5 ? base + 25 : base // 5/10/15/20/50
+        return Double(lv) * 0.05
+    }
+    private var currentEnemyDefense: Int {
+        let base = isBossRound ? cpuDefense * 2 : cpuDefense
+        let reduced = Double(base) * max(0.0, 1.0 - ignoreDefensePercent)
+        return Int(reduced.rounded(.toNearestOrAwayFromZero))
     }
     
-    // 護盾天賦提供的最大護盾
     private var computedShieldMax: Int {
         let lv = min(100, max(0, talent6Level))
         return lv * 5
     }
-    
-    // 目前被動倍率（用於選角畫面顯示）
     private var currentPassiveMultiplier: Double {
         var mult = 1.0 + 0.1 * Double(min(5, talent4Level))
         if talent4Level >= 5 { mult += 0.25 }
         return mult
     }
-    
-    // 依角色顯示總倍率字串
-    private func totalPassiveLine(for character: Character) -> String {
+    private func currentTotalMultiplier(for character: Character) -> Double {
+        let base: Double
         switch character {
-        case .強運戰士:
-            return String(format: "總倍率：爆擊 ×%.2f = 1.50 × %.2f", baseCritMultiplier * currentPassiveMultiplier, currentPassiveMultiplier)
-        case .蓄力鬥士:
-            return String(format: "總倍率：爆發 ×%.2f = 2.50 × %.2f", baseBurstMultiplier * currentPassiveMultiplier, currentPassiveMultiplier)
-        case .治療祭司:
-            let healBase = 0.5
-            return String(format: "總倍率：治療 ×%.2f = 0.50 × %.2f", healBase * currentPassiveMultiplier, currentPassiveMultiplier)
+        case .強運戰士: base = baseCritMultiplier
+        case .蓄力鬥士: base = baseBurstMultiplier
+        case .治療祭司: base = 0.5
         }
+        return base * currentPassiveMultiplier
     }
     
-    // MARK: - View
     var body: some View {
         ZStack {
             lightMedievalBackground
@@ -302,14 +257,8 @@ struct ContentView: View {
                 }
                 Spacer(minLength: 0)
             }
-            
-            if showUpgrade {
-                overlayCard(upgradeOverlay)
-            }
-            
-            if showSettlement {
-                overlayCard(settlementOverlay)
-            }
+            if showUpgrade { overlayCard(upgradeOverlay) }
+            if showSettlement { overlayCard(settlementOverlay) }
         }
         .onAppear {
             AudioManager.shared.preload([
@@ -319,6 +268,10 @@ struct ContentView: View {
             AudioManager.shared.setBGMVolume(Float(bgmVolumeStore))
             AudioManager.shared.setSFXVolume(Float(sfxVolumeStore))
             AudioManager.shared.loadBGM(named: SFX.battleBGM)
+            // Play BGM on main UI as well if enabled
+            if bgmEnabled {
+                AudioManager.shared.playBGM(loop: true)
+            }
         }
         .onChange(of: bgmVolumeStore) { _, v in AudioManager.shared.setBGMVolume(Float(v)) }
         .onChange(of: sfxVolumeStore) { _, v in AudioManager.shared.setSFXVolume(Float(v)) }
@@ -343,17 +296,18 @@ struct ContentView: View {
                              sfxVolume: $sfxVolumeStore,
                              onClose: { showSettings = false })
                 .onChange(of: bgmEnabled) { _, on in
-                    if on { AudioManager.shared.loadBGM(named: SFX.battleBGM) }
-                    else { AudioManager.shared.stopBGM() }
+                    if on {
+                        AudioManager.shared.loadBGM(named: SFX.battleBGM)
+                        AudioManager.shared.playBGM(loop: true)
+                    } else {
+                        AudioManager.shared.stopBGM()
+                    }
                 }
             }
         }
-        .alert("遊戲結束", isPresented: $isGameOver) {
-            Button("確定") { }
-        } message: { Text("你被擊敗了，下次再挑戰！") }
     }
     
-    // MARK: - Themed Background (Bright)
+    // MARK: - Themed Background
     private var lightMedievalBackground: some View {
         ZStack {
             LinearGradient(colors: [
@@ -361,14 +315,11 @@ struct ContentView: View {
                 Color(red: 0.94, green: 0.90, blue: 0.82)
             ], startPoint: .top, endPoint: .bottom)
             .ignoresSafeArea()
-            // 柔和紙張紋理亮暈
             RadialGradient(colors: [Color.white.opacity(0.25), .clear],
                            center: .center, startRadius: 20, endRadius: 600)
                 .blur(radius: 40)
         }
     }
-    
-    // 通用亮色卡片
     private func parchmentCard(_ content: () -> some View) -> some View {
         ZStack {
             RoundedRectangle(cornerRadius: 22, style: .continuous)
@@ -379,8 +330,6 @@ struct ContentView: View {
         .overlay(content())
         .shadow(color: .black.opacity(0.08), radius: 10, x: 0, y: 6)
     }
-    
-    // Sheet 統一容器
     private func themedContainer<Content: View>(@ViewBuilder content: @escaping () -> Content) -> some View {
         ZStack {
             lightMedievalBackground
@@ -399,7 +348,6 @@ struct ContentView: View {
             }
         }
     }
-    
     private func overlayCard<Content: View>(_ inner: Content) -> some View {
         ZStack {
             Color.black.opacity(0.15).ignoresSafeArea()
@@ -419,20 +367,23 @@ struct ContentView: View {
         .transition(.opacity.combined(with: .scale))
     }
     
-    // MARK: - Main Menu (Centered + Bright theme)
+    // MARK: - Main Menu
     private var mainMenuView: some View {
         VStack(spacing: 22) {
             VStack(spacing: 6) {
                 Label("我獨自猜拳", systemImage: "shield.lefthalf.filled")
                     .font(.system(size: 34, weight: .heavy, design: .serif))
+                    .frame(maxWidth: .infinity, alignment: .center)
                 Text("Rock · Paper · Scissors · Rogue")
                     .font(.footnote.smallCaps())
                     .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .center)
             }
             .padding(.top, 6)
             
             VStack(spacing: 14) {
-                menuCardButton(title: "開始冒險", systemImage: "sword", accent: .orange) {
+                // Icon changed to a more widely supported symbol
+                menuCardButton(title: "開始冒險", systemImage: "shield", accent: .orange) {
                     AudioManager.shared.play(SFX.tap, volume: 0.8)
                     resetToCharacterSelect()
                     showMainMenu = false
@@ -471,15 +422,15 @@ struct ContentView: View {
         .background(parchmentCard { EmptyView() })
         .padding(.horizontal, 20)
     }
-    
     private func menuCardButton(title: String, systemImage: String, accent: Color, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             HStack(spacing: 14) {
                 Image(systemName: systemImage)
                     .font(.system(size: 24, weight: .black))
+                    .frame(width: 28, alignment: .leading)
                 Text(title)
                     .font(.system(.title3, design: .serif).weight(.bold))
-                Spacer()
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 Image(systemName: "chevron.right")
                     .font(.headline.weight(.bold))
                     .foregroundStyle(.secondary)
@@ -505,6 +456,7 @@ struct ContentView: View {
         VStack(spacing: 24) {
             Text("選擇職業")
                 .font(.system(.largeTitle, design: .serif).bold())
+                .frame(maxWidth: .infinity, alignment: .center)
                 .padding(.top, 8)
             
             VStack(spacing: 16) {
@@ -512,17 +464,14 @@ struct ContentView: View {
                     Button {
                         AudioManager.shared.play(SFX.tap, volume: 0.8)
                         choose(character)
-                        if bgmEnabled {
-                            AudioManager.shared.playBGM(loop: true)
-                        }
+                        if bgmEnabled { AudioManager.shared.playBGM(loop: true) }
                     } label: {
                         HStack(spacing: 16) {
                             Image(systemName: character.icon)
                                 .font(.system(size: 28, weight: .bold))
                                 .frame(width: 36)
                             VStack(alignment: .leading, spacing: 6) {
-                                Text(character.name)
-                                    .font(.headline)
+                                Text(character.name).font(.headline)
                                 VStack(alignment: .leading, spacing: 2) {
                                     Text(character.description)
                                         .font(.subheadline)
@@ -531,7 +480,7 @@ struct ContentView: View {
                                     Text(String(format: "當前被動倍率 ×%.2f", currentPassiveMultiplier))
                                         .font(.footnote.weight(.semibold))
                                         .foregroundStyle(.secondary)
-                                    Text(totalPassiveLine(for: character))
+                                    Text(String(format: "目前總倍率 ×%.2f", currentTotalMultiplier(for: character)))
                                         .font(.footnote.weight(.semibold))
                                         .foregroundStyle(.secondary)
                                 }
@@ -556,8 +505,7 @@ struct ContentView: View {
             .padding(.horizontal, 20)
             
             VStack(spacing: 8) {
-                Text("代幣：\(String(format: "%.2f", tokens))")
-                    .font(.headline)
+                Text("代幣：\(String(format: "%.2f", tokens))").font(.headline)
                 HStack(spacing: 12) {
                     Button {
                         AudioManager.shared.play(SFX.tap, volume: 0.8)
@@ -573,9 +521,11 @@ struct ContentView: View {
                     
                     Button {
                         AudioManager.shared.play(SFX.tap, volume: 0.8)
-                        selectedCharacter = nil
+                        // Do not show settlement; just go back to main menu
                         showMainMenu = true
-                        AudioManager.shared.stopBGM()
+                        selectedCharacter = nil
+                        resetGame()
+                        // 保留 BGM 在主畫面播放
                     } label: {
                         Label("返回大廳", systemImage: "house")
                             .font(.headline)
@@ -588,9 +538,10 @@ struct ContentView: View {
             }
             .padding(.top, 4)
             
-            Text("提示：可於遊戲中按「重置」返回選角畫面")
+            Text("提示：可於遊戲中按「重置(回選角)」回到選角畫面")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .center)
                 .padding(.horizontal)
         }
         .padding(.vertical)
@@ -601,9 +552,10 @@ struct ContentView: View {
     
     // MARK: - Game View
     private var gameView: some View {
-        VStack(spacing: 24) {
+        VStack(spacing: 20) {
             Text("我獨自猜拳")
                 .font(.system(.largeTitle, design: .serif).bold())
+                .frame(maxWidth: .infinity, alignment: .center)
                 .padding(.top, 8)
             
             if let selectedCharacter {
@@ -622,7 +574,7 @@ struct ContentView: View {
                 .padding(.horizontal)
             }
             
-            // 顯示玩家屬性與進度
+            // 屬性與進度
             VStack(spacing: 6) {
                 HStack(spacing: 16) {
                     Label("ATK \(playerAttack)", systemImage: "flame")
@@ -648,36 +600,51 @@ struct ContentView: View {
             }
             .padding(.horizontal)
             
-            // HP Bars
-            VStack(spacing: 16) {
-                hpRow(title: "玩家", hp: playerHP, maxHP: playerMaxHP, color: .green)
+            // HP + Shield Bars 疊層
+            VStack(spacing: 12) {
+                hpRow(title: "玩家",
+                      hp: playerHP,
+                      maxHP: playerMaxHP,
+                      shield: playerShield,
+                      maxShield: playerShieldMax)
                     .modifier(Shake(animatableData: shakePlayer ? 1 : 0))
                 hpRow(title: isBossRound ? "Boss" : "電腦",
                       hp: cpuHP,
                       maxHP: currentEnemyMaxHP,
-                      color: isBossRound ? .orange : .red)
+                      shield: 0,
+                      maxShield: 0) // 敵方不顯示護盾
                     .modifier(Shake(animatableData: shakeCPU ? 1 : 0))
             }
             .padding(.horizontal)
             
-            // Choices display
-            HStack(spacing: 32) {
+            // Choices
+            HStack(spacing: 24) {
                 choiceCard(owner: "玩家", choice: playerChoice)
                 Image(systemName: "bolt.horizontal.fill")
                     .foregroundStyle(.secondary)
                 choiceCard(owner: isBossRound ? "Boss" : "電腦", choice: cpuChoice)
             }
+            .padding(.horizontal)
             
-            // Message
-            Text(message)
-                .font(.title3.weight(.semibold))
-                .padding(.horizontal)
-                .multilineTextAlignment(.center)
-                .frame(maxWidth: .infinity)
-                .animation(.easeInOut, value: message)
+            // 訊息 + 治療提示
+            VStack(spacing: 6) {
+                Text(message)
+                    .font(.title3.weight(.semibold))
+                    .multilineTextAlignment(.center)
+                    .lineLimit(2)
+                    .frame(maxWidth: .infinity, minHeight: 48, alignment: .center)
+                    .padding(.horizontal)
+                if selectedCharacter == .治療祭司 {
+                    Text("提示：治療不會影響護盾值")
+                        .font(.footnote.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .center)
+                        .padding(.horizontal)
+                }
+            }
             
-            // Buttons
-            HStack(spacing: 16) {
+            // 操作按鈕
+            HStack(spacing: 12) {
                 ForEach(RPS.allCases) { rps in
                     Button {
                         AudioManager.shared.play(SFX.tap, volume: 0.6)
@@ -703,23 +670,11 @@ struct ContentView: View {
             }
             .padding(.horizontal)
             
-            // Reset
+            // 重置/返回
             HStack(spacing: 12) {
                 Button {
                     AudioManager.shared.play(SFX.tap, volume: 0.8)
-                    resetRoundOnly()
-                } label: {
-                    Text("重置回合")
-                        .font(.headline)
-                        .padding(.horizontal, 20)
-                        .padding(.vertical, 10)
-                        .background(Color.orange.opacity(0.2), in: Capsule())
-                }
-                .buttonStyle(ScaleButtonStyle())
-                .disabled(showSettlement)
-                Button {
-                    AudioManager.shared.play(SFX.tap, volume: 0.8)
-                    resetToCharacterSelect()
+                    forceShowSettlementAsDefeat()
                 } label: {
                     Text(isGameOver ? "再選角色" : "重置(回選角)")
                         .font(.headline)
@@ -728,12 +683,13 @@ struct ContentView: View {
                         .background(Color.yellow.opacity(0.25), in: Capsule())
                 }
                 .buttonStyle(ScaleButtonStyle())
+                
                 Button {
                     AudioManager.shared.play(SFX.tap, volume: 0.8)
+                    forceShowSettlementAsDefeat()
                     showMainMenu = true
                     selectedCharacter = nil
-                    resetGame()
-                    AudioManager.shared.stopBGM()
+                    // 保留 BGM 在主畫面播放
                 } label: {
                     Text("返回大廳")
                         .font(.headline)
@@ -744,22 +700,19 @@ struct ContentView: View {
                 .buttonStyle(ScaleButtonStyle())
             }
             .padding(.bottom, 12)
+            .padding(.horizontal)
         }
-        .padding(.vertical)
+        .padding(.vertical, 16)
         .frame(maxWidth: 900)
         .background(parchmentCard { EmptyView() })
         .padding(.horizontal, 16)
     }
     
-    // MARK: - Derived current enemy stats (Boss 取 2x)
+    // MARK: - Derived enemy stats
     private var currentEnemyMaxHP: Int { isBossRound ? cpuMaxHP * 2 : cpuMaxHP }
     private var currentEnemyAttack: Int { isBossRound ? cpuAttack * 2 : cpuAttack }
-    private var currentEnemyDefense: Int {
-        let base = isBossRound ? cpuDefense * 2 : cpuDefense
-        return max(0, base - ignoreDefenseFlat)
-    }
     
-    // MARK: - Upgrade Overlay content
+    // MARK: - Upgrade Overlay
     private var upgradeOverlay: some View {
         VStack(spacing: 16) {
             Text(lastWinWasBoss ? "Boss 勝利！選擇雙倍強化" : "勝利！選擇一個強化")
@@ -769,27 +722,53 @@ struct ContentView: View {
                     AudioManager.shared.play(SFX.tap, volume: 0.8)
                     applyUpgrade(.attack)
                 } label: {
-                    upgradeCard(title: lastWinWasBoss ? "攻擊力 +10" : "攻擊力 +5",
-                                icon: "flame",
-                                subtitle: lastWinWasBoss ? "Boss 獎勵：雙倍強化" : "提升造成的傷害")
+                    upgradeCard(
+                        title: lastWinWasBoss ? "攻擊力 +10" : "攻擊力 +5",
+                        icon: "flame",
+                        subtitle: lastWinWasBoss ? "Boss 獎勵：雙倍強化" : "提升造成的傷害"
+                    )
                 }
                 .buttonStyle(ScaleButtonStyle())
+                
                 Button {
                     AudioManager.shared.play(SFX.tap, volume: 0.8)
                     applyUpgrade(.defense)
                 } label: {
-                    upgradeCard(title: lastWinWasBoss ? "防禦力 +6" : "防禦力 +3",
-                                icon: "shield",
-                                subtitle: lastWinWasBoss ? "Boss 獎勵：雙倍強化" : "減少受到的傷害")
+                    upgradeCard(
+                        title: lastWinWasBoss ? "防禦力 +6" : "防禦力 +3",
+                        icon: "shield",
+                        subtitle: lastWinWasBoss ? "Boss 獎勵：雙倍強化" : "減少受到的傷害"
+                    )
                 }
                 .buttonStyle(ScaleButtonStyle())
+                
+                // 血量卡片改為兩行：第一行上限變化，第二行回復與括號說明
                 Button {
                     AudioManager.shared.play(SFX.tap, volume: 0.8)
                     applyUpgrade(.maxHP)
                 } label: {
-                    upgradeCard(title: lastWinWasBoss ? "血量上限 +40，回復 60 生命" : "血量上限 +20，回復 30 生命",
-                                icon: "heart",
-                                subtitle: "上限提升且立即回復（不影響護盾）")
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack(spacing: 14) {
+                            Image(systemName: "heart")
+                                .font(.system(size: 24, weight: .bold))
+                                .frame(width: 28, alignment: .leading)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(lastWinWasBoss ? "血量上限 +40" : "血量上限 +20")
+                                    .font(.headline)
+                                Text(lastWinWasBoss ? "回復 60 生命（不影響護盾）" : "回復 30 生命（不影響護盾）")
+                                    .font(.subheadline)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                        }
+                        .padding()
+                        .frame(maxWidth: .infinity)
+                        .background(Color.white.opacity(0.95), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                .stroke(Color(red: 0.75, green: 0.58, blue: 0.25).opacity(0.7), lineWidth: 1.2)
+                        )
+                    }
                 }
                 .buttonStyle(ScaleButtonStyle())
             }
@@ -797,16 +776,17 @@ struct ContentView: View {
         }
     }
     
-    // MARK: - Settlement Overlay content
+    // MARK: - Settlement Overlay
     private var settlementOverlay: some View {
         VStack(spacing: 16) {
             Text("結算")
                 .font(.largeTitle.bold())
-            VStack(spacing: 8) {
+            VStack(alignment: .leading, spacing: 6) {
                 Label("一般擊敗：\(defeatCount)", systemImage: "trophy")
                 Label("Boss 擊敗：\(bossWinsCount)", systemImage: "crown")
                 Label("獲得代幣：\(String(format: "%.2f", tokensEarnedThisRun))", systemImage: "bitcoinsign.circle")
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
             .font(.headline)
             .padding(.vertical, 4)
             
@@ -818,7 +798,7 @@ struct ContentView: View {
                     showSettlement = false
                     resetToCharacterSelect()
                     showMainMenu = true
-                    AudioManager.shared.stopBGM()
+                    // 保留 BGM 在主畫面播放
                 } label: {
                     Text("領取並返回大廳")
                         .font(.headline)
@@ -827,6 +807,7 @@ struct ContentView: View {
                         .background(Color.orange.opacity(0.2), in: Capsule())
                 }
                 .buttonStyle(ScaleButtonStyle())
+                
                 Button {
                     AudioManager.shared.play(SFX.tap, volume: 0.8)
                     tokens += tokensEarnedThisRun
@@ -834,7 +815,7 @@ struct ContentView: View {
                     showSettlement = false
                     resetToCharacterSelect()
                     showTalentsSheet = true
-                    AudioManager.shared.stopBGM()
+                    // 保留 BGM 在主畫面播放
                 } label: {
                     Text("領取並前往天賦")
                         .font(.headline)
@@ -851,7 +832,7 @@ struct ContentView: View {
         HStack(spacing: 14) {
             Image(systemName: icon)
                 .font(.system(size: 24, weight: .bold))
-                .frame(width: 28)
+                .frame(width: 28, alignment: .leading)
             VStack(alignment: .leading, spacing: 2) {
                 Text(title).font(.headline)
                 Text(subtitle).font(.subheadline).foregroundStyle(.secondary)
@@ -868,19 +849,46 @@ struct ContentView: View {
     }
     
     // MARK: - UI Parts
-    private func hpRow(title: String, hp: Int, maxHP: Int, color: Color) -> some View {
+    private func hpRow(title: String, hp: Int, maxHP: Int, shield: Int, maxShield: Int) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
-                Text(title)
-                    .font(.headline)
+                Text(title).font(.headline)
                 Spacer()
                 Text("\(max(0, hp))/\(maxHP)")
                     .monospacedDigit()
                     .foregroundStyle(.secondary)
             }
-            ProgressView(value: Double(max(0, hp)), total: Double(maxHP))
-                .tint(color)
-                .shadow(color: color.opacity(0.15), radius: 3, x: 0, y: 1)
+            ZStack(alignment: .leading) {
+                // 底層：紅色 HP 條
+                Capsule()
+                    .fill(Color.red.opacity(0.25))
+                    .frame(height: 10)
+                GeometryReader { geo in
+                    let width = geo.size.width
+                    let hpRatio = max(0, min(1, Double(hp) / Double(maxHP)))
+                    let shieldRatio = maxShield > 0 ? max(0, min(1, Double(shield) / Double(maxShield))) : 0
+                    // 紅色實際 HP 長度
+                    let hpWidth = width * hpRatio
+                    // 黃色護盾長度（覆蓋層）
+                    let shieldWidth = width * shieldRatio
+                    
+                    ZStack(alignment: .leading) {
+                        Capsule()
+                            .fill(Color.red)
+                            .frame(width: hpWidth, height: 10)
+                        Capsule()
+                            .fill(Color.yellow)
+                            .frame(width: shieldWidth, height: 10)
+                            .shadow(color: .yellow.opacity(0.25), radius: 2, x: 0, y: 0)
+                    }
+                }
+                .frame(height: 10)
+                .clipShape(Capsule())
+                .overlay(
+                    Capsule()
+                        .stroke(Color.black.opacity(0.08), lineWidth: 1)
+                )
+            }
         }
         .padding(.horizontal)
     }
@@ -999,6 +1007,9 @@ struct ContentView: View {
     private func handleEnemyDefeated() {
         if isBossRound {
             bossWinsCount += 1
+            // Double the token standard on each boss win
+            tokenStandard *= 2.0
+            
             if bossWinsCount >= 10 {
                 tokensEarnedThisRun = calcTokenReward()
                 showSettlement = true
@@ -1029,10 +1040,10 @@ struct ContentView: View {
     }
     
     private func calcTokenReward() -> Double {
-        Double(defeatCount) + 5.0 * Double(bossWinsCount)
+        // Reward uses the current run's tokenStandard and counts all defeats equally
+        tokenStandard * Double(defeatCount + bossWinsCount)
     }
     
-    // Keep a single Upgrade enum definition
     private enum Upgrade { case attack, defense, maxHP }
     
     private func applyUpgrade(_ upgrade: Upgrade) {
@@ -1055,7 +1066,7 @@ struct ContentView: View {
             let before = playerHP
             playerHP = min(playerMaxHP, playerHP + healGain)
             let healed = playerHP - before
-            message = "升級成功！血量上限 +\(hpGain)；並回復 \(healed) 生命"
+            message = "升級成功！血量上限 +\(hpGain)\n回復 \(healed) 生命（不影響護盾）"
         }
         
         showUpgrade = false
@@ -1065,18 +1076,6 @@ struct ContentView: View {
         cpuChoice = nil
         playerChoice = nil
         message += "，新的一場開始！"
-    }
-    
-    private func resetRoundOnly() {
-        playerHP = playerMaxHP
-        playerShield = playerShieldMax
-        cpuHP = currentEnemyMaxHP
-        playerChoice = nil
-        cpuChoice = nil
-        message = "選擇你的出拳！"
-        isGameOver = false
-        showUpgrade = false
-        lastWinWasBoss = false
     }
     
     private func resetToCharacterSelect() {
@@ -1089,8 +1088,9 @@ struct ContentView: View {
         playerHP = playerMaxHP
         playerShieldMax = computedShieldMax
         playerShield = playerShieldMax
+        // Reset token standard on returning to character select
+        tokenStandard = 1.0
     }
-    
     private func resetGame() {
         cpuHP = currentEnemyMaxHP
         playerChoice = nil
@@ -1100,7 +1100,6 @@ struct ContentView: View {
         showUpgrade = false
         lastWinWasBoss = false
     }
-    
     private func choose(_ character: Character) {
         selectedCharacter = character
         
@@ -1133,6 +1132,9 @@ struct ContentView: View {
         showUpgrade = false
         showSettlement = false
         tokensEarnedThisRun = 0
+        
+        // New run: reset token standard to 1.0
+        tokenStandard = 1.0
     }
     
     private func hitPlayer() {
@@ -1145,7 +1147,6 @@ struct ContentView: View {
             }
         }
     }
-    
     private func hitCPU() {
         withAnimation(.spring(response: 0.35, dampingFraction: 0.55)) {
             shakeCPU = true
@@ -1157,20 +1158,29 @@ struct ContentView: View {
         }
     }
     
+    // New: halve damage absorbed by shield; HP damage unchanged
     private func applyDamageToShieldThenHP(_ damage: Int) -> Int {
         var remaining = damage
-        if playerShield > 0 {
-            let usedShield = min(playerShield, remaining)
-            playerShield -= usedShield
-            remaining -= usedShield
+        var totalHPDamage = 0
+        
+        if playerShield > 0 && remaining > 0 {
+            // Effective damage to shield is halved
+            // Compute how much effective damage we can absorb given current shield
+            // Each 1 shield absorbs 2 incoming damage (since incoming/2 is applied)
+            let maxAbsorbableIncoming = playerShield * 2
+            let incomingToShield = min(maxAbsorbableIncoming, remaining)
+            // Effective deduction on shield is floor(incomingToShield / 2)
+            let shieldDeduction = incomingToShield / 2
+            playerShield -= shieldDeduction
+            remaining -= incomingToShield
         }
+        
         if remaining > 0 {
             let before = playerHP
             playerHP = max(0, playerHP - remaining)
-            return before - playerHP
-        } else {
-            return 0
+            totalHPDamage = before - playerHP
         }
+        return totalHPDamage
     }
     
     private func refillShield() { playerShield = playerShieldMax }
@@ -1189,6 +1199,15 @@ struct ContentView: View {
         let lv = min(5, max(0, talent3Level))
         let base = lv * 10
         return lv >= 5 ? base + 50 : base
+    }
+    
+    private func forceShowSettlementAsDefeat() {
+        guard !showSettlement else { return }
+        tokensEarnedThisRun = calcTokenReward()
+        isGameOver = true
+        showUpgrade = false
+        showSettlement = true
+        message = "你選擇結束本局，以下是結算。"
     }
 }
 
@@ -1279,7 +1298,6 @@ struct Shake: GeometryEffect {
     var amount: CGFloat = 8
     var shakesPerUnit: CGFloat = 3
     var animatableData: CGFloat
-
     func effectValue(size: CGSize) -> ProjectionTransform {
         let translation = amount * sin(animatableData * .pi * shakesPerUnit)
         return ProjectionTransform(CGAffineTransform(translationX: translation, y: 0))
@@ -1307,16 +1325,11 @@ struct TalentSheet: View {
         default: return .infinity
         }
     }
-    
     private func canUpgrade(level: Int) -> Bool {
         level < 5 && tokens + 1e-9 >= costFor(level: level)
     }
-    
-    private func shieldCostFor(level: Int) -> Double {
-        let nextLevel = level + 1
-        return Double(2 * nextLevel)
-    }
-    
+    // Updated: starts at 20, +5 per current level
+    private func shieldCostFor(level: Int) -> Double { Double(20 + level * 5) }
     private func canUpgradeShield(level: Int) -> Bool {
         guard level < 100 else { return false }
         let cost = shieldCostFor(level: level)
@@ -1326,13 +1339,11 @@ struct TalentSheet: View {
     var body: some View {
         NavigationView {
             List {
-                Section(header: Text("代幣：\(String(format: "%.2f", tokens))")) {
-                    EmptyView()
-                }
+                Section(header: Text("代幣：\(String(format: "%.2f", tokens))")) { EmptyView() }
                 
                 talentRow(
                     title: "攻擊力",
-                    desc: "每級 +5；5級額外 +25（最多5級）",
+                    desc: "每級 +5，達 5 級時額外 +25（上限 5 級）。",
                     level: $talent1Level,
                     computePreview: { lv in
                         let base = lv * 5 + (lv >= 5 ? 25 : 0)
@@ -1341,15 +1352,11 @@ struct TalentSheet: View {
                     maxLevel: 5,
                     costProvider: costFor(level:),
                     canUpgrade: canUpgrade(level:),
-                    onUpgrade: { lv, cost in
-                        tokens -= cost
-                        return min(5, lv + 1)
-                    }
+                    onUpgrade: { lv, cost in tokens -= cost; return min(5, lv + 1) }
                 )
-                
                 talentRow(
                     title: "防禦力",
-                    desc: "每級 +5；5級額外 +25（最多5級）",
+                    desc: "每級 +5，達 5 級時額外 +25（上限 5 級）。",
                     level: $talent2Level,
                     computePreview: { lv in
                         let base = lv * 5 + (lv >= 5 ? 25 : 0)
@@ -1358,15 +1365,11 @@ struct TalentSheet: View {
                     maxLevel: 5,
                     costProvider: costFor(level:),
                     canUpgrade: canUpgrade(level:),
-                    onUpgrade: { lv, cost in
-                        tokens -= cost
-                        return min(5, lv + 1)
-                    }
+                    onUpgrade: { lv, cost in tokens -= cost; return min(5, lv + 1) }
                 )
-                
                 talentRow(
-                    title: "生命",
-                    desc: "每級 +10；5級額外 +50（最多5級）",
+                    title: "生命上限",
+                    desc: "每級 +10，達 5 級時額外 +50（上限 5 級）。",
                     level: $talent3Level,
                     computePreview: { lv in
                         let base = lv * 10 + (lv >= 5 ? 50 : 0)
@@ -1375,15 +1378,11 @@ struct TalentSheet: View {
                     maxLevel: 5,
                     costProvider: costFor(level:),
                     canUpgrade: canUpgrade(level:),
-                    onUpgrade: { lv, cost in
-                        tokens -= cost
-                        return min(5, lv + 1)
-                    }
+                    onUpgrade: { lv, cost in tokens -= cost; return min(5, lv + 1) }
                 )
-                
                 talentRow(
                     title: "角色被動倍率",
-                    desc: "每級 +10% 倍率；5級額外 +0.25（最多5級）",
+                    desc: "每級 +10%，達 5 級時額外 +0.25（上限 5 級）。",
                     level: $talent4Level,
                     computePreview: { lv in
                         var mult = 1.0 + 0.1 * Double(min(5, lv))
@@ -1393,35 +1392,67 @@ struct TalentSheet: View {
                     maxLevel: 5,
                     costProvider: costFor(level:),
                     canUpgrade: canUpgrade(level:),
-                    onUpgrade: { lv, cost in
-                        tokens -= cost
-                        return min(5, lv + 1)
-                    }
+                    onUpgrade: { lv, cost in tokens -= cost; return min(5, lv + 1) }
                 )
                 
-                talentRow(
-                    title: "無視防禦",
-                    desc: "每級 +5 平坦無視；5級額外 +25（最多5級）",
-                    level: $talent5Level,
-                    computePreview: { lv in
-                        let base = lv * 5 + (lv >= 5 ? 25 : 0)
-                        return "無視防禦 \(base)"
-                    },
-                    maxLevel: 5,
-                    costProvider: costFor(level:),
-                    canUpgrade: canUpgrade(level:),
-                    onUpgrade: { lv, cost in
-                        tokens -= cost
-                        return min(5, lv + 1)
-                    }
-                )
-                
-                // Talent 6: 護盾（最多100級，每級+5；成本每級 +2）
+                // 無視防禦：百分比 + 成本 10 倍
                 HStack(alignment: .top, spacing: 12) {
                     VStack(alignment: .leading, spacing: 4) {
-                        Text("護盾")
-                            .font(.headline)
-                        Text("每級 +5 護盾，最多100級；只能靠天賦提升，勝利時自動回滿；無法被治療或能力值回復")
+                        Text("無視防禦").font(.headline)
+                        Text("每級 +5% 無視敵方防禦，達 5 級共 25%（上限 5 級）。")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                        let percent = talent5Level * 5
+                        Text("無視防禦 \(percent)%")
+                            .font(.footnote.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    VStack(spacing: 6) {
+                        Text("Lv. \(talent5Level)/5")
+                            .font(.subheadline.weight(.semibold))
+                            .monospacedDigit()
+                        Button {
+                            let lv = talent5Level
+                            guard lv < 5 else { return }
+                            let baseCost = costFor(level: lv)
+                            let cost = baseCost * 10
+                            guard tokens + 1e-9 >= cost else { return }
+                            tokens -= cost
+                            talent5Level = min(5, lv + 1)
+                        } label: {
+                            if talent5Level >= 5 {
+                                Text("已滿級")
+                                    .font(.subheadline.weight(.semibold))
+                                    .padding(.horizontal, 12)
+                                    .padding(.vertical, 8)
+                                    .background(Color.gray.opacity(0.2), in: Capsule())
+                            } else {
+                                let baseCost = costFor(level: talent5Level)
+                                let cost = baseCost * 10
+                                Text("升級(\(String(format: "%.1f", cost)))")
+                                    .font(.subheadline.weight(.semibold))
+                                    .padding(.horizontal, 12)
+                                    .padding(.vertical, 8)
+                                    .background((tokens + 1e-9 >= cost) ? Color.orange.opacity(0.2) : Color.gray.opacity(0.2), in: Capsule())
+                            }
+                        }
+                        .disabled({
+                            let lv = talent5Level
+                            guard lv < 5 else { return true }
+                            let baseCost = costFor(level: lv)
+                            let cost = baseCost * 10
+                            return !(tokens + 1e-9 >= cost)
+                        }())
+                    }
+                }
+                .padding(.vertical, 6)
+                
+                // 護盾：單句 + 成本從 20 起遞增（每級 +5）
+                HStack(alignment: .top, spacing: 12) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("護盾").font(.headline)
+                        Text("每級 +5 護盾，最多 100 級，勝利時自動回滿護盾。")
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
                         Text("Max SHD +\(talent6Level * 5)")
@@ -1458,6 +1489,12 @@ struct TalentSheet: View {
                     }
                 }
                 .padding(.vertical, 6)
+                
+                Section {
+                    Text("提示：護盾無法被治療或能力值回復。")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
             }
             .navigationTitle("天賦")
             .toolbar {
